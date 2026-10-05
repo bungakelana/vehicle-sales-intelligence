@@ -1,0 +1,69 @@
+---
+import { readData } from '../lib/site-data';
+const meta = readData('meta.json');
+const months: string[] = meta.filters.year_month;
+const years = [...new Set(months.map((m) => m.slice(0, 4)))];
+const quarters = [...new Set(months.map((m) => `${m.slice(0, 4)}Q${Math.ceil(Number(m.slice(5, 7)) / 3)}`))];
+interface Props { hide?: string[] }
+const hide = Astro.props.hide ?? [];
+const payOptions = [['', 'Semua'], ['Cash', 'Cash'], ['Leasing', 'Leasing']];
+---
+<div class="sticky top-14 z-20 -mx-4 border-b border-border px-4 py-2 backdrop-blur sm:mx-0 sm:rounded-xl sm:border" style="background: color-mix(in srgb, var(--bg) 85%, transparent)">
+  <form class="flex flex-wrap items-center gap-2" data-filterbar aria-label="Filter dashboard">
+    {!hide.includes('period') && (
+      <select name="period" class="select" aria-label="Periode">
+        <option value="">Semua periode</option>
+        <optgroup label="Tahun">{years.map((y) => <option value={y}>{y}</option>)}</optgroup>
+        <optgroup label="Kuartal">{quarters.map((q) => <option value={q}>{q}</option>)}</optgroup>
+      </select>
+    )}
+    {!hide.includes('branch') && (
+      <select name="branch" class="select" aria-label="Cabang">
+        <option value="">Semua cabang</option>
+        {meta.filters.sales_point.map((s: string) => <option value={s}>{s}</option>)}
+      </select>
+    )}
+    {!hide.includes('kabupaten') && (
+      <select name="kabupaten" class="select" aria-label="Kabupaten/kota">
+        <option value="">Semua kabupaten/kota</option>
+        {meta.filters.kabupaten.map((s: string) => <option value={s}>{s}</option>)}
+      </select>
+    )}
+    {!hide.includes('type') && (
+      <select name="type" class="select" aria-label="Tipe unit">
+        <option value="">Semua tipe</option>
+        {meta.filters.model_family.map((s: string) => <option value={s}>{s}</option>)}
+      </select>
+    )}
+    {!hide.includes('pay') && (
+      <div class="inline-flex overflow-hidden rounded-lg border border-border text-sm" role="radiogroup" aria-label="Cara bayar">
+        {payOptions.map(([v, l]) => <button type="button" role="radio" data-pay={v} class="px-3 py-1.5">{l}</button>)}
+      </div>
+    )}
+    <button type="button" data-reset class="ml-auto text-sm font-medium text-accent hover:underline">Reset</button>
+  </form>
+</div>
+<script>
+  import { getFilters, resetFilters, setFilters } from '../lib/data';
+  const form = document.querySelector<HTMLFormElement>('[data-filterbar]')!;
+  form.addEventListener('submit', (e) => e.preventDefault());
+  const sync = () => {
+    const f = getFilters() as unknown as Record<string, string>;
+    form.querySelectorAll<HTMLSelectElement>('select').forEach((s) => (s.value = f[s.name] ?? ''));
+    form.querySelectorAll<HTMLButtonElement>('[data-pay]').forEach((b) => {
+      const on = b.dataset.pay === f.pay;
+      b.setAttribute('aria-checked', String(on));
+      b.style.background = on ? 'var(--accent)' : 'var(--surface)';
+      b.style.color = on ? '#fff' : 'var(--text)';
+    });
+  };
+  form.addEventListener('change', (e) => {
+    const s = e.target as HTMLSelectElement;
+    if (s.name) setFilters({ [s.name]: s.value });
+  });
+  form.querySelectorAll<HTMLButtonElement>('[data-pay]').forEach((b) =>
+    b.addEventListener('click', () => setFilters({ pay: b.dataset.pay ?? '' })));
+  form.querySelector('[data-reset]')!.addEventListener('click', resetFilters);
+  window.addEventListener('filters:change', sync);
+  sync();
+</script>

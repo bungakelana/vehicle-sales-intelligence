@@ -1,0 +1,177 @@
+---
+import { readData } from '../lib/site-data';
+import Base from '../layouts/Base.astro';
+import FilterBar from '../components/FilterBar.astro';
+import KpiCard from '../components/KpiCard.astro';
+import ChartCard from '../components/ChartCard.astro';
+import Takeaways from '../components/Takeaways.astro';
+const insights = readData('insights.json');
+---
+<Base title="Geografi" question="Di kabupaten/kota mana penjualan kuat, dan di mana ada white space?">
+  <FilterBar />
+  <div class="grid grid-cols-2 gap-3 md:grid-cols-4">
+    <KpiCard id="kab" label="Kabupaten/kota aktif" />
+    <KpiCard id="top5" label="Share Top-5 kabupaten" />
+    <KpiCard id="top1" label="Kabupaten terbesar" />
+    <KpiCard id="cross" label="Serah terima lintas cabang" hint="seluruh periode" />
+  </div>
+  <div class="grid gap-4 lg:grid-cols-5">
+    <ChartCard id="map" class="lg:col-span-3" title={insights.geography[0]} subtitle="Unit terjual per kabupaten/kota Riau · klik wilayah untuk memfilter halaman" height={440} />
+    <ChartCard id="rank" class="lg:col-span-2" title="Ranking kabupaten/kota" subtitle="Unit terjual (Kepulauan Meranti ditampilkan dalam poligon Bengkalis di peta)" height={440} />
+  </div>
+  <div class="grid gap-4 lg:grid-cols-2">
+    <ChartCard id="pareto" title="Kurva Pareto: konsentrasi pasar" subtitle="Unit per kabupaten & kumulatif %" height={320} />
+    <ChartCard id="whitespace" title={insights.geography[1].split(' — ')[0]} subtitle="Populasi (ribu) vs unit terjual · ukuran gelembung = gap potensi unit" height={320} />
+  </div>
+  <ChartCard id="kabtable" title="Profil kabupaten: diskon & ketergantungan leasing" subtitle="Rata-rata diskon % vs % leasing per kabupaten/kota (ukuran = unit)" height={320} />
+  <Takeaways page="geography" />
+</Base>
+
+<script>
+  import { applyFilters, debounce, fact, getFilters, groupBy, load, setFilters, sortedEntries, toObjects } from '../lib/data';
+  import { axis, chart, echarts, table, tokens } from '../lib/echarts';
+  import { num, num1, pct, rpJt } from '../lib/format';
+
+  async function main() {
+    const [rows, geoRaw, gj] = await Promise.all([fact(), load('data/geo.json'), load('geo/riau_kabupaten.geojson')]);
+    echarts.registerMap('riau', gj);
+    const geo = toObjects<any>(geoRaw);
+    const geoName = new Map(geo.map((g) => [g.kabupaten_std, g.geo_name]));
+    const kabByGeo = new Map<string, string>();
+    geo.forEach((g) => g.geo_name && !kabByGeo.has(g.geo_name) && kabByGeo.set(g.geo_name, g.kabupaten_std));
+
+    const setKpi = (id: string, v: string, d = '') => {
+      const el = document.querySelector(`[data-kpi="${id}"]`)!;
+      el.querySelector('[data-value]')!.textContent = v;
+      if (d) el.querySelector('[data-delta]')!.textContent = d;
+    };
+
+    function kpis() {
+      const g = sortedEntries(groupBy(applyFilters(rows, getFilters(), ['kabupaten']), 'kabupaten'));
+      const total = g.reduce((s, [, a]) => s + a.units, 0);
+      const top5 = g.slice(0, 5).reduce((s, [, a]) => s + a.units, 0);
+      setKpi('kab', num(g.length));
+      setKpi('top5', total ? pct(top5 / total, 0) : '–');
+      setKpi('top1', g[0]?.[0] ?? '–', g[0] ? `${num(g[0][1].units)} unit · ${pct(g[0][1].units / total, 0)}` : '');
+      const cross = geo.reduce((s, r) => s + r.cross * r.units, 0) / geo.reduce((s, r) => s + r.units, 0);
+      setKpi('cross', pct(cross, 0));
+    }
+
+    const map = chart('map', () => {
+      const t = tokens();
+      const f = getFilters();
+      const g = groupBy(applyFilters(rows, f, ['kabupaten']), (r) => geoName.get(r.kabupaten) ?? 'Luar Riau');
+      const data = gj.features.map((ft: any) => ({ name: ft.properties.name, value: g.get(ft.properties.name)?.units ?? 0 }));
+      const vals = data.map((d: any) => d.value).sort((a: number, b: number) => a - b);
+      const q = (p: number) => vals[Math.floor(p * (vals.length - 1))];
+      const breaks = [q(0.2), q(0.4), q(0.6), q(0.8)];
+      const selected = f.kabupaten ? geoName.get(f.kabupaten) : '';
+      return {
+        tooltip: { trigger: 'item', formatter: (p: any) => `${p.name}<br/><b>${num(p.value || 0)}</b> unit` },
+        visualMap: {
+          type: 'piecewise', left: 0, bottom: 0, itemWidth: 12, itemHeight: 10, textStyle: { color: t.muted, fontSize: 10 },
+          pieces: [
+            { lt: breaks[0] + 0.01, color: t.seq[0] }, { gte: breaks[0] + 0.01, lt: breaks[1] + 0.01, color: t.seq[1] },
+            { gte: breaks[1] + 0.01, lt: breaks[2] + 0.01, color: t.seq[2] }, { gte: breaks[2] + 0.01, lt: breaks[3] + 0.01, color: t.seq[3] },
+            { gte: breaks[3] + 0.01, color: t.seq[4] },
+          ],
+        },
+        series: [{
+          type: 'map', map: 'riau', roam: false, layoutCenter: ['55%', '50%'], layoutSize: '105%',
+          selectedMode: 'single',
+          itemStyle: { borderColor: t.surface, borderWidth: 1 },
+          emphasis: { itemStyle: { areaColor: t.highlight }, label: { color: '#000' } },
+          select: { itemStyle: { areaColor: t.highlight, borderColor: t.text }, label: { show: true, color: '#000' } },
+          label: { show: true, fontSize: 9, color: t.text },
+          data: data.map((d: any) => ({ ...d, selected: d.name === selected })),
+        }],
+      };
+    }, (c) => c.on('click', (p: any) => {
+      const kab = kabByGeo.get(p.name);
+      if (kab) setFilters({ kabupaten: getFilters().kabupaten === kab ? '' : kab });
+    }));
+
+    const rank = chart('rank', () => {
+      const t = tokens();
+      const f = getFilters();
+      const g = sortedEntries(groupBy(applyFilters(rows, f, ['kabupaten']), 'kabupaten'));
+      table('rank', ['Kabupaten', 'Unit', 'Net revenue', 'Avg diskon', '% Leasing'],
+        g.map(([k, a]) => [k, a.units, rpJt(a.net), pct(a.discount / a.gross), pct(a.leasing / a.units, 0)]));
+      const top = g.slice(0, 15).reverse();
+      return {
+        tooltip: { trigger: 'axis' },
+        grid: { left: 8, right: 40, top: 8, bottom: 8, containLabel: true },
+        xAxis: { type: 'value', ...axis({ axisLabel: { show: false }, splitLine: { show: false } }) },
+        yAxis: { type: 'category', data: top.map(([k]) => k), ...axis() },
+        series: [{ type: 'bar', barMaxWidth: 14, label: { show: true, position: 'right', color: t.muted },
+          data: top.map(([k, a]) => ({ value: a.units, itemStyle: { color: f.kabupaten ? (k === f.kabupaten ? t.highlight : t.grey) : t.accent, borderRadius: [0, 3, 3, 0] } })) }],
+      };
+    }, (c) => c.on('click', (p: any) => setFilters({ kabupaten: getFilters().kabupaten === p.name ? '' : p.name })));
+
+    const pareto = chart('pareto', () => {
+      const t = tokens();
+      const g = sortedEntries(groupBy(applyFilters(rows, getFilters(), ['kabupaten']), 'kabupaten'));
+      const total = g.reduce((s, [, a]) => s + a.units, 0);
+      let c = 0;
+      const cum = g.map(([, a]) => +((c += a.units) / total * 100).toFixed(1));
+      table('pareto', ['Kabupaten', 'Unit', 'Kumulatif %'], g.map(([k, a], i) => [k, a.units, num1(cum[i])]));
+      return {
+        tooltip: { trigger: 'axis' },
+        xAxis: { type: 'category', data: g.map(([k]) => k), ...axis({ axisLabel: { color: t.muted, fontSize: 10, rotate: 40 }, splitLine: { show: false } }) },
+        yAxis: [{ type: 'value', ...axis() }, { type: 'value', max: 100, ...axis({ splitLine: { show: false }, axisLabel: { color: t.muted, formatter: '{value}%' } }) }],
+        series: [
+          { type: 'bar', name: 'Unit', barMaxWidth: 22, data: g.map(([, a], i) => ({ value: a.units, itemStyle: { color: i < 5 ? t.accent : t.grey } })) },
+          { type: 'line', name: 'Kumulatif %', yAxisIndex: 1, data: cum, symbolSize: 5, lineStyle: { color: t.highlight }, itemStyle: { color: t.highlight },
+            markLine: { silent: true, symbol: 'none', lineStyle: { color: t.muted, type: 'dashed' }, label: { color: t.muted, formatter: '80%', position: 'insideStartTop' }, data: [{ yAxis: 80 }] } },
+        ],
+      };
+    });
+
+    chart('whitespace', () => {
+      const t = tokens();
+      const g = geo.filter((r) => r.population_k);
+      const maxGap = Math.max(...g.map((r) => Math.abs(r.gap_units)));
+      table('whitespace', ['Kabupaten', 'Populasi (rb)', 'Unit', 'Unit/100rb', 'Gap potensi unit', 'Ekonomi utama'],
+        g.map((r) => [r.kabupaten_std, num(r.population_k), r.units, num1(r.units_per_100k), num(r.gap_units), r.main_economy]));
+      const avg = g.reduce((s, r) => s + r.units, 0) / g.reduce((s, r) => s + r.population_k, 0);
+      const xs = g.map((r) => r.population_k);
+      const lo = Math.min(...xs) * 0.9, hi = Math.max(...xs) * 1.05;
+      return {
+        tooltip: { trigger: 'item', formatter: (p: any) => `<b>${p.data[3]}</b><br/>Populasi ${num(p.data[0])} rb · ${p.data[1]} unit<br/>Gap potensi: ${num(p.data[2])} unit` },
+        grid: { left: 8, right: 24, top: 28, bottom: 28, containLabel: true },
+        xAxis: { type: 'value', name: 'Populasi (ribu)', nameLocation: 'middle', nameGap: 24, min: Math.floor(lo / 100) * 100, ...axis() },
+        yAxis: { type: 'value', name: 'Unit', ...axis() },
+        series: [{
+          type: 'scatter',
+          data: g.map((r) => [r.population_k, r.units, r.gap_units, r.kabupaten_std]),
+          symbolSize: (d: number[]) => 8 + 26 * Math.max(0, d[2]) / maxGap,
+          itemStyle: { color: (p: any) => (p.data[2] > 0 ? t.highlight : t.accent), opacity: 0.85 },
+          label: { show: true, position: 'right', fontSize: 10, color: t.muted, formatter: (p: any) => p.data[3].replace('Kota ', '') },
+          markLine: { silent: true, symbol: 'none', lineStyle: { color: t.muted, type: 'dashed' }, label: { color: t.muted, formatter: 'rata-rata Riau' },
+            data: [[{ coord: [lo, lo * avg] }, { coord: [hi, hi * avg] }]] },
+        }],
+      };
+    });
+
+    const profile = chart('kabtable', () => {
+      const t = tokens();
+      const g = sortedEntries(groupBy(applyFilters(rows, getFilters(), ['kabupaten']), 'kabupaten')).filter(([, a]) => a.units >= 5);
+      const maxU = Math.max(...g.map(([, a]) => a.units));
+      table('kabtable', ['Kabupaten', 'Unit', 'Avg diskon %', '% Leasing'], g.map(([k, a]) => [k, a.units, num1(a.discount / a.gross * 100), num1(a.leasing / a.units * 100)]));
+      return {
+        tooltip: { trigger: 'item', formatter: (p: any) => `<b>${p.data[3]}</b><br/>Diskon ${num1(p.data[0])}% · Leasing ${num1(p.data[1])}% · ${p.data[2]} unit` },
+        grid: { left: 8, right: 24, top: 28, bottom: 28, containLabel: true },
+        xAxis: { type: 'value', name: 'Avg diskon %', nameLocation: 'middle', nameGap: 24, scale: true, ...axis() },
+        yAxis: { type: 'value', name: '% Leasing', scale: true, ...axis() },
+        series: [{ type: 'scatter', data: g.map(([k, a]) => [a.discount / a.gross * 100, a.leasing / a.units * 100, a.units, k]),
+          symbolSize: (d: number[]) => 8 + 30 * Math.sqrt(d[2] / maxU),
+          itemStyle: { color: t.accent, opacity: 0.75 },
+          label: { show: true, position: 'right', fontSize: 10, color: t.muted, formatter: (p: any) => p.data[3].replace('Kota ', '') } }],
+      };
+    });
+
+    kpis();
+    window.addEventListener('filters:change', debounce(() => { kpis(); map.update(); rank.update(); pareto.update(); profile.update(); }));
+  }
+  main();
+</script>

@@ -1,0 +1,142 @@
+---
+import { readData } from '../lib/site-data';
+import Base from '../layouts/Base.astro';
+import FilterBar from '../components/FilterBar.astro';
+import ChartCard from '../components/ChartCard.astro';
+const product = readData('product.json');
+
+const fam = new Map<string, number>();
+product.tree.rows.forEach((r: any[]) => fam.set(r[0], (fam.get(r[0]) ?? 0) + r[3]));
+const total = [...fam.values()].reduce((a, b) => a + b, 0);
+const [topFam, topUnits] = [...fam.entries()].sort((a, b) => b[1] - a[1])[0];
+const lt = [...fam.entries()].filter(([k]) => k.startsWith('Light')).reduce((s, [, v]) => s + v, 0);
+const white = product.colors.find((c: any[]) => c[0] === 'PUTIH')?.[1] ?? 0;
+---
+<Base title="Product Mix" question="Tipe unit & karoseri apa yang paling laku, dan di wilayah mana?">
+  <FilterBar hide={['type']} />
+  <div class="grid gap-4 lg:grid-cols-5">
+    <ChartCard id="treemap" class="lg:col-span-3" title={`${topFam} jadi tipe terlaris (${Math.round(topUnits / total * 100)}%); segmen Light Truck total ${Math.round(lt / total * 100)}% unit`} subtitle="Treemap tipe → karoseri → warna (seluruh periode) · klik untuk zoom" height={420} />
+    <ChartCard id="family" class="lg:col-span-2" title="Unit per tipe" subtitle="Mengikuti filter" height={420} />
+  </div>
+  <ChartCard id="heat" title="Tipe unit terlaris per kabupaten/kota" subtitle="Heatmap unit kabupaten × tipe (mengikuti filter)" height={460} />
+  <div class="grid gap-4 lg:grid-cols-2">
+    <ChartCard id="body" title="Dump & tangki CPO mendominasi wilayah perkebunan/tambang; box di perkotaan" subtitle="Share karoseri per kabupaten (Top-8 kabupaten, seluruh periode)" height={360} />
+    <ChartCard id="colors" title={`Putih mendominasi ${Math.round(white / total * 100)}% unit — prioritaskan stok putih`} subtitle="Preferensi warna (seluruh periode)" height={360} />
+  </div>
+</Base>
+
+<script>
+  import { applyFilters, debounce, fact, getFilters, groupBy, load, toObjects } from '../lib/data';
+  import { axis, categorical, chart, table, tokens } from '../lib/echarts';
+  import { num, pct } from '../lib/format';
+
+  async function main() {
+    const [rows, product] = await Promise.all([fact(), load('data/product.json')]);
+
+    chart('treemap', () => {
+      const t = tokens();
+      const tree = new Map<string, Map<string, { name: string; value: number }[]>>();
+      for (const [fam, body, color, units] of product.tree.rows) {
+        if (!tree.has(fam)) tree.set(fam, new Map());
+        const b = tree.get(fam)!;
+        if (!b.has(body)) b.set(body, []);
+        b.get(body)!.push({ name: color, value: units });
+      }
+      const pal = categorical();
+      const data = [...tree].map(([fam, bodies], i) => ({
+        name: fam, itemStyle: { color: pal[i % pal.length] },
+        children: [...bodies].map(([body, colors]) => ({ name: body, children: colors })),
+      }));
+      table('treemap', ['Tipe', 'Karoseri', 'Warna', 'Unit'], product.tree.rows, 3);
+      return {
+        tooltip: { formatter: (p: any) => `${p.treePathInfo.slice(1).map((x: any) => x.name).join(' › ')}<br/><b>${num(p.value)}</b> unit` },
+        series: [{
+          type: 'treemap', data, roam: false, leafDepth: 2, top: 0, left: 0, right: 0, bottom: 28,
+          breadcrumb: { bottom: 0, itemStyle: { color: t.surface, borderColor: t.border, textStyle: { color: t.text } } },
+          label: { fontSize: 11 }, upperLabel: { show: true, height: 18, color: '#fff', fontSize: 11 },
+          levels: [{ itemStyle: { borderColor: t.surface, borderWidth: 3, gapWidth: 3 } },
+            { itemStyle: { borderColor: t.surface, borderWidth: 1, gapWidth: 1 }, colorSaturation: [0.35, 0.6] },
+            { colorSaturation: [0.3, 0.6] }],
+        }],
+      };
+    });
+
+    const family = chart('family', () => {
+      const t = tokens();
+      const g = [...groupBy(applyFilters(rows, getFilters(), ['type']), 'model_family')].sort((a, b) => a[1].units - b[1].units);
+      const total = g.reduce((s, [, a]) => s + a.units, 0);
+      table('family', ['Tipe', 'Unit', 'Share', 'Avg diskon'], g.map(([k, a]) => [k, a.units, pct(a.units / total), pct(a.discount / a.gross)]));
+      return {
+        tooltip: { trigger: 'axis' },
+        grid: { left: 8, right: 48, top: 8, bottom: 8, containLabel: true },
+        xAxis: { type: 'value', ...axis({ axisLabel: { show: false }, splitLine: { show: false } }) },
+        yAxis: { type: 'category', data: g.map(([k]) => k), ...axis() },
+        series: [{ type: 'bar', barMaxWidth: 22, data: g.map(([, a], i) => ({ value: a.units, itemStyle: { color: i === g.length - 1 ? t.highlight : t.accent, borderRadius: [0, 3, 3, 0] } })),
+          label: { show: true, position: 'right', color: t.muted, formatter: (p: any) => `${p.value} · ${pct(p.value / total, 0)}` } }],
+      };
+    });
+
+    const heat = chart('heat', () => {
+      const t = tokens();
+      const f = applyFilters(rows, getFilters(), ['type']);
+      const kabs = [...groupBy(f, 'kabupaten')].sort((a, b) => a[1].units - b[1].units).map(([k]) => k);
+      const fams = [...groupBy(f, 'model_family')].sort((a, b) => b[1].units - a[1].units).map(([k]) => k);
+      const g = groupBy(f, (r) => `${r.kabupaten}|${r.model_family}`);
+      const data: number[][] = [];
+      kabs.forEach((k, y) => fams.forEach((m, x) => data.push([x, y, g.get(`${k}|${m}`)?.units ?? 0])));
+      const max = Math.max(1, ...data.map((d) => d[2]));
+      table('heat', ['Kabupaten', ...fams], [...kabs].reverse().map((k) => [k, ...fams.map((m) => g.get(`${k}|${m}`)?.units ?? 0)]));
+      return {
+        tooltip: { formatter: (p: any) => `${kabs[p.value[1]]} · ${fams[p.value[0]]}<br/><b>${p.value[2]}</b> unit` },
+        grid: { left: 8, right: 8, top: 8, bottom: 40, containLabel: true },
+        xAxis: { type: 'category', data: fams, position: 'top', ...axis({ splitLine: { show: false } }) },
+        yAxis: { type: 'category', data: kabs, ...axis({ splitLine: { show: false } }) },
+        visualMap: { min: 0, max, calculable: false, orient: 'horizontal', left: 'center', bottom: 0, itemHeight: 120, itemWidth: 10,
+          inRange: { color: t.seq }, textStyle: { color: t.muted, fontSize: 10 } },
+        series: [{ type: 'heatmap', label: { show: true, fontSize: 10, formatter: (p: any) => (p.value[2] ? p.value[2] : '') },
+          data: data.map((d) => ({ value: d, label: { color: d[2] > max * 0.55 ? '#fff' : '#0F172A' } })),
+          itemStyle: { borderColor: t.surface, borderWidth: 2 } }],
+      };
+    });
+
+    chart('body', () => {
+      const br = toObjects<any>(product.body_region);
+      const totals = new Map<string, number>();
+      br.forEach((r) => totals.set(r.kabupaten_std, (totals.get(r.kabupaten_std) ?? 0) + r.units));
+      const kabs = [...totals].sort((a, b) => b[1] - a[1]).slice(0, 8).map(([k]) => k).reverse();
+      const bodyTot = new Map<string, number>();
+      br.forEach((r) => bodyTot.set(r.body_spec, (bodyTot.get(r.body_spec) ?? 0) + r.units));
+      const top = [...bodyTot].sort((a, b) => b[1] - a[1]).slice(0, 5).map(([k]) => k);
+      const cats = [...top, 'Lainnya'];
+      const val = (k: string, b: string) => br.filter((r) => r.kabupaten_std === k && (b === 'Lainnya' ? !top.includes(r.body_spec) : r.body_spec === b))
+        .reduce((s, r) => s + r.units, 0) / totals.get(k)! * 100;
+      table('body', ['Kabupaten', ...cats.map((c) => `${c} %`)], kabs.slice().reverse().map((k) => [k, ...cats.map((c) => val(k, c).toFixed(1))]));
+      return {
+        tooltip: { trigger: 'axis', valueFormatter: (v: number) => `${v.toFixed(1)}%` },
+        legend: { top: 0, type: 'scroll' },
+        grid: { left: 8, right: 16, top: 32, bottom: 8, containLabel: true },
+        xAxis: { type: 'value', max: 100, ...axis({ axisLabel: { color: tokens().muted, formatter: '{value}%' } }) },
+        yAxis: { type: 'category', data: kabs, ...axis() },
+        series: cats.map((c) => ({ name: c, type: 'bar', stack: 'a', barMaxWidth: 20, data: kabs.map((k) => +val(k, c).toFixed(1)) })),
+      };
+    });
+
+    chart('colors', () => {
+      const t = tokens();
+      const c = product.colors as [string, number][];
+      const total = c.reduce((s, [, v]) => s + v, 0);
+      table('colors', ['Warna', 'Unit', 'Share'], c.map(([k, v]) => [k, v, pct(v / total)]));
+      return {
+        tooltip: { trigger: 'axis' },
+        grid: { left: 8, right: 48, top: 8, bottom: 8, containLabel: true },
+        xAxis: { type: 'value', ...axis({ axisLabel: { show: false }, splitLine: { show: false } }) },
+        yAxis: { type: 'category', inverse: true, data: c.map(([k]) => k), ...axis() },
+        series: [{ type: 'bar', barMaxWidth: 16, data: c.map(([, v], i) => ({ value: v, itemStyle: { color: i === 0 ? t.highlight : t.grey, borderRadius: [0, 3, 3, 0] } })),
+          label: { show: true, position: 'right', color: t.muted, formatter: (p: any) => pct(p.value / total, 0) } }],
+      };
+    });
+
+    window.addEventListener('filters:change', debounce(() => { family.update(); heat.update(); }));
+  }
+  main();
+</script>

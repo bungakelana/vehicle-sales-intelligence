@@ -1,0 +1,77 @@
+---
+import { readData } from '../lib/site-data';
+import '../styles/tokens.css';
+import ThemeToggle from '../components/ThemeToggle.astro';
+const meta = readData('meta.json');
+
+interface Props { title: string; description?: string; question?: string }
+const { title, description = 'Analisis penjualan kendaraan niaga: geografi, efektivitas diskon, risiko leasing, dan efisiensi operasional.', question } = Astro.props;
+const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+const nav = [
+  ['/', 'Overview'], ['/geography', 'Geografi'], ['/product', 'Produk'], ['/discount', 'Diskon'],
+  ['/financing', 'Leasing'], ['/sales-team', 'Tim Sales'], ['/operations', 'Operasional'],
+  ['/outlook', 'Outlook'], ['/about', 'About'],
+];
+const path = Astro.url.pathname.replace(base, '').replace(/\/$/, '') || '/';
+const fullTitle = `${title} · Vehicle Sales Intelligence`;
+---
+<!doctype html>
+<html lang="id" data-base={base}>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{fullTitle}</title>
+    <meta name="description" content={description} />
+    <meta property="og:title" content={fullTitle} />
+    <meta property="og:description" content={description} />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <link rel="icon" href={`${base}/favicon.svg`} type="image/svg+xml" />
+    <script is:inline>
+      try { const t = localStorage.getItem('theme'); if (t) document.documentElement.dataset.theme = t; } catch {}
+      if (new URLSearchParams(location.search).get('embed') === '1') document.documentElement.classList.add('embed');
+    </script>
+    <style is:global>
+      .embed [data-site-nav], .embed [data-site-footer] { display: none; }
+    </style>
+  </head>
+  <body class="min-h-screen">
+    <a href="#main" class="sr-only focus:not-sr-only focus:absolute focus:left-2 focus:top-2 focus:z-50 focus:rounded focus:bg-surface focus:px-3 focus:py-2">Lewati ke konten</a>
+    <header data-site-nav class="sticky top-0 z-30 border-b border-border" style="background: color-mix(in srgb, var(--surface) 92%, transparent); backdrop-filter: blur(8px)">
+      <div class="mx-auto flex h-14 max-w-7xl items-center gap-4 px-4">
+        <a href={`${base}/`} class="flex shrink-0 items-center gap-2 font-semibold text-primary">
+          <span class="inline-block h-3 w-3 rotate-45 rounded-sm" style="background: var(--highlight)" aria-hidden="true"></span>
+          <span class="hidden sm:inline">Vehicle Sales Intelligence</span><span class="sm:hidden">VSI</span>
+        </a>
+        <nav class="flex-1 overflow-x-auto" aria-label="Halaman">
+          <ul class="flex gap-1 whitespace-nowrap text-sm">
+            {nav.map(([href, label]) => {
+              const active = path === href;
+              return (
+                <li><a href={`${base}${href}`} aria-current={active ? 'page' : undefined}
+                  class={`block rounded-md px-2.5 py-1.5 ${active ? 'font-semibold text-primary' : 'text-muted hover:text-text'}`}
+                  style={active ? 'background: color-mix(in srgb, var(--accent) 12%, transparent)' : ''}>{label}</a></li>
+              );
+            })}
+          </ul>
+        </nav>
+        <ThemeToggle />
+      </div>
+    </header>
+    <main id="main" class="mx-auto max-w-7xl space-y-6 px-4 py-6">
+      {question && (
+        <div>
+          <p class="text-xs font-semibold uppercase tracking-wider" style="color: var(--highlight)">Pertanyaan bisnis</p>
+          <h1 class="mt-1 text-2xl font-bold tracking-tight text-primary sm:text-[32px] sm:leading-tight">{question}</h1>
+        </div>
+      )}
+      <slot />
+    </main>
+    <footer data-site-footer class="mt-10 border-t border-border">
+      <div class="mx-auto flex max-w-7xl flex-col gap-2 px-4 py-6 text-xs text-muted sm:flex-row sm:justify-between">
+        <p>{meta.disclaimer} Periode data {meta.period.start} s/d {meta.period.end} · diperbarui {meta.updated}.</p>
+        <p class="flex gap-3"><a class="hover:text-text" href="#">GitHub</a><a class="hover:text-text" href="#">LinkedIn</a><a class="hover:text-text" href="#">CV</a></p>
+      </div>
+    </footer>
+  </body>
+</html>

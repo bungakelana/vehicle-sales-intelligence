@@ -1,0 +1,9 @@
+---
+interface Props { id: string; label: string; hint?: string }
+const { id, label, hint } = Astro.props;
+---
+<div class="card p-4" data-kpi={id}>
+  <div class="text-xs font-medium text-muted">{label}</div>
+  <div class="num mt-1 text-2xl font-semibold tracking-tight" data-value>—</div>
+  <div class="num mt-0.5 min-h-4 text-xs text-muted" data-delta>{hint ?? ''}</div>
+</div>

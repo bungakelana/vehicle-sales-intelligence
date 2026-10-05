@@ -1,0 +1,21 @@
+---
+interface Props { id: string; title: string; subtitle?: string; height?: number; class?: string; table?: boolean }
+const { id, title, subtitle, height = 320, class: cls = '', table = true } = Astro.props;
+---
+<section class={`card flex min-w-0 flex-col p-4 ${cls}`} data-chart-card aria-labelledby={`${id}-title`}>
+  <h3 id={`${id}-title`} class="text-[15px] font-semibold leading-snug text-primary" data-title>{title}</h3>
+  {subtitle && <p class="mt-0.5 text-xs text-muted" data-subtitle>{subtitle}</p>}
+  <slot name="controls" />
+  <div class="relative mt-3" style={`height:${height}px`}>
+    <div class="skeleton absolute inset-0 rounded-lg" aria-hidden="true"></div>
+    <div id={id} class="chart absolute inset-0" role="img" aria-label={title}></div>
+  </div>
+  <slot />
+  {table && (
+    <details class="mt-2 text-sm">
+      <summary class="cursor-pointer select-none text-xs font-medium text-accent">Lihat tabel</summary>
+      <div class="mt-2 max-h-72 overflow-auto" data-table-for={id}></div>
+      <button type="button" class="mt-2 text-xs font-medium text-accent underline" data-csv-for={id}>Download CSV</button>
+    </details>
+  )}
+</section>

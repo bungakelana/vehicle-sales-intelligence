@@ -1,0 +1,167 @@
+---
+import { readData } from '../lib/site-data';
+import Base from '../layouts/Base.astro';
+import FilterBar from '../components/FilterBar.astro';
+import KpiCard from '../components/KpiCard.astro';
+import ChartCard from '../components/ChartCard.astro';
+import Takeaways from '../components/Takeaways.astro';
+const l = readData('leasing.json');
+const p = (v: number) => `${Math.round(v * 100)}%`;
+---
+<Base title="Leasing Risk" question="Seberapa besar ketergantungan pada leasing, dan partner mana yang paling berisiko?">
+  <div class="grid grid-cols-2 gap-3 md:grid-cols-4">
+    <KpiCard id="pct" label="% unit via leasing" />
+    <KpiCard id="hhi" label="HHI konsentrasi leasing" />
+    <KpiCard id="top3" label="Share Top-3 leasing" />
+    <KpiCard id="top1" label="Leasing terbesar" />
+  </div>
+
+  <section class="card p-5" aria-labelledby="stress-title">
+    <div class="flex flex-wrap items-end justify-between gap-4">
+      <div>
+        <p class="text-xs font-semibold uppercase tracking-wider" style="color: var(--highlight)">Stress test · {l.stress_baseline.window}</p>
+        <h2 id="stress-title" class="mt-1 text-lg font-semibold text-primary">Jika approval leasing turun <span id="stress-pct" class="num">20%</span>, berapa yang berisiko?</h2>
+        <p class="mt-1 max-w-2xl text-sm text-muted">NPF gross multifinance naik ke ~3,04% (Agu 2026) dan puluhan perusahaan pembiayaan memiliki NPF &gt; 5%. Geser slider untuk mensimulasikan penurunan approval kredit.</p>
+      </div>
+      <label class="flex w-full max-w-sm flex-col gap-1 text-xs text-muted">
+        Penurunan approval
+        <input id="stress" type="range" min="0" max="30" step="1" value="20" aria-describedby="stress-title" />
+        <span class="flex justify-between"><span>0%</span><span>15%</span><span>30%</span></span>
+      </label>
+    </div>
+    <div class="mt-4 grid grid-cols-2 gap-3 md:grid-cols-4">
+      <div><div class="text-xs text-muted">Unit berisiko / tahun</div><div class="num text-2xl font-semibold" id="s-units" style="color: var(--negative)">—</div></div>
+      <div><div class="text-xs text-muted">Net revenue berisiko</div><div class="num text-2xl font-semibold" id="s-net" style="color: var(--negative)">—</div></div>
+      <div><div class="text-xs text-muted">% dari total unit</div><div class="num text-2xl font-semibold" id="s-share">—</div></div>
+      <div><div class="text-xs text-muted">Bila 50% dikonversi ke cash</div><div class="num text-2xl font-semibold" id="s-mit" style="color: var(--positive)">—</div></div>
+    </div>
+    <div class="relative mt-4 h-[220px]"><div class="skeleton absolute inset-0 rounded-lg" aria-hidden="true"></div><div id="stress-chart" class="chart absolute inset-0" role="img" aria-label="Net revenue berisiko per leasing"></div></div>
+  </section>
+
+  <div class="grid gap-4 lg:grid-cols-2">
+    <ChartCard id="share" title={`${l.share[0][0]} menguasai ${p(l.share[0][1])} transaksi kredit; top-3 = ${p(l.top3_share)}`} subtitle={`Share unit per leasing · HHI ${l.hhi} (${l.hhi_label.toLowerCase()})`} height={300} />
+    <ChartCard id="term" title="Term pembayaran & lama STNK per leasing" subtitle="Median hari" height={300} />
+  </div>
+  <FilterBar hide={['pay']} />
+  <div class="grid gap-4 lg:grid-cols-2">
+    <ChartCard id="trend" title="Mix cash vs leasing per bulan" subtitle="% unit leasing (garis) & unit (batang bertumpuk) · mengikuti filter" height={320} />
+    <ChartCard id="kab" title="Kabupaten paling bergantung pada kredit" subtitle="% unit leasing per kabupaten · mengikuti filter" height={320} />
+  </div>
+  <Takeaways page="financing" />
+</Base>
+
+<script>
+  import { applyFilters, debounce, fact, getFilters, groupBy, load } from '../lib/data';
+  import { axis, chart, table, tokens } from '../lib/echarts';
+  import { num, num1, pct, rpJt, ym } from '../lib/format';
+
+  async function main() {
+    const [l, rows, meta] = await Promise.all([load('data/leasing.json'), fact(), load('data/meta.json')]);
+    const setKpi = (id: string, v: string, h = '') => {
+      const el = document.querySelector(`[data-kpi="${id}"]`)!;
+      el.querySelector('[data-value]')!.textContent = v;
+      el.querySelector('[data-delta]')!.textContent = h;
+    };
+    setKpi('pct', pct(l.pct_leasing, 0), 'seluruh periode');
+    setKpi('hhi', num(l.hhi), l.hhi_label);
+    setKpi('top3', pct(l.top3_share, 0), 'dari transaksi kredit');
+    setKpi('top1', l.share[0][0], `${pct(l.share[0][1], 0)} share`);
+
+    const b = l.stress_baseline;
+    const slider = document.getElementById('stress') as HTMLInputElement;
+    const stressChart = chart('stress-chart', () => {
+      const t = tokens();
+      const s = Number(slider.value) / 100;
+      const data = [...b.by_leasing].sort((a: any[], c: any[]) => c[2] - a[2]);
+      return {
+        tooltip: { trigger: 'axis', valueFormatter: (v: number) => rpJt(v) },
+        grid: { left: 8, right: 16, top: 16, bottom: 8, containLabel: true },
+        xAxis: { type: 'category', data: data.map((r: any[]) => r[0]), ...axis({ splitLine: { show: false } }) },
+        yAxis: { type: 'value', ...axis({ axisLabel: { color: t.muted, formatter: (v: number) => rpJt(v) } }) },
+        series: [
+          { name: 'Aman', type: 'bar', stack: 'a', barMaxWidth: 40, itemStyle: { color: t.grey }, data: data.map((r: any[]) => +(r[2] * (1 - s)).toFixed(0)) },
+          { name: 'Berisiko', type: 'bar', stack: 'a', barMaxWidth: 40, itemStyle: { color: t.negative, borderRadius: [3, 3, 0, 0] }, data: data.map((r: any[]) => +(r[2] * s).toFixed(0)) },
+        ],
+      };
+    });
+    const renderStress = () => {
+      const s = Number(slider.value) / 100;
+      document.getElementById('stress-pct')!.textContent = `${slider.value}%`;
+      document.getElementById('s-units')!.textContent = num(b.leasing_units * s);
+      document.getElementById('s-net')!.textContent = rpJt(b.leasing_net_jt * s);
+      document.getElementById('s-share')!.textContent = pct(b.leasing_units * s / b.total_units);
+      document.getElementById('s-mit')!.textContent = `−${rpJt(b.leasing_net_jt * s * 0.5)}`;
+      stressChart.update();
+    };
+    slider.addEventListener('input', debounce(renderStress, 30));
+    renderStress();
+
+    chart('share', () => {
+      const t = tokens();
+      table('share', ['Leasing', 'Share', 'Unit', 'Net (Rp jt)'], l.share.map((r: any[]) => [r[0], pct(r[1]), r[2], num(r[3])]));
+      return {
+        tooltip: { trigger: 'item', formatter: (p: any) => `${p.name}: ${pct(p.value)}` },
+        legend: { show: false },
+        series: [{ type: 'pie', radius: ['48%', '75%'], center: ['50%', '52%'], itemStyle: { borderColor: t.surface, borderWidth: 2 },
+          label: { color: t.text, formatter: (p: any) => `${p.name}\n${pct(p.value, 0)}`, fontSize: 11 },
+          data: l.share.map((r: any[], i: number) => ({ name: r[0], value: r[1], itemStyle: { color: i < 3 ? [t.accent, '#5B9BD5', '#8DBBE5'][i] : t.grey } })) }],
+      };
+    });
+
+    chart('term', () => {
+      const t = tokens();
+      table('term', ['Leasing', 'Median term (hari)', 'Median STNK (hari)'], l.share.map((r: any[]) => [r[0], r[4], r[5]]));
+      return {
+        tooltip: { trigger: 'axis' },
+        legend: { right: 0 },
+        xAxis: { type: 'category', data: l.share.map((r: any[]) => r[0]), ...axis({ splitLine: { show: false }, axisLabel: { color: t.muted, fontSize: 10 } }) },
+        yAxis: { type: 'value', name: 'hari', ...axis() },
+        series: [
+          { name: 'Term pembayaran', type: 'bar', barMaxWidth: 20, itemStyle: { color: t.grey }, data: l.share.map((r: any[]) => r[4]) },
+          { name: 'Billing → STNK', type: 'bar', barMaxWidth: 20, itemStyle: { color: t.accent }, data: l.share.map((r: any[]) => r[5]) },
+        ],
+      };
+    });
+
+    const trend = chart('trend', () => {
+      const t = tokens();
+      const f = applyFilters(rows, getFilters(), ['period']);
+      const g = groupBy(f, 'year_month');
+      const months: string[] = meta.filters.year_month;
+      const leasing = months.map((m) => g.get(m)?.leasing ?? 0);
+      const cash = months.map((m, i) => (g.get(m)?.units ?? 0) - leasing[i]);
+      const share = months.map((m, i) => (g.get(m)?.units ? +(leasing[i] / g.get(m)!.units * 100).toFixed(1) : null));
+      table('trend', ['Bulan', 'Cash', 'Leasing', '% Leasing'], months.map((m, i) => [m, cash[i], leasing[i], share[i] ?? '–']));
+      return {
+        tooltip: { trigger: 'axis' },
+        legend: { right: 0 },
+        xAxis: { type: 'category', data: months.map(ym), ...axis({ splitLine: { show: false } }) },
+        yAxis: [{ type: 'value', ...axis() }, { type: 'value', max: 100, ...axis({ splitLine: { show: false }, axisLabel: { color: t.muted, formatter: '{value}%' } }) }],
+        series: [
+          { name: 'Cash', type: 'bar', stack: 'u', itemStyle: { color: t.grey }, data: cash },
+          { name: 'Leasing', type: 'bar', stack: 'u', itemStyle: { color: t.accent }, data: leasing },
+          { name: '% Leasing', type: 'line', yAxisIndex: 1, smooth: true, symbol: 'none', connectNulls: true, lineStyle: { color: t.highlight, width: 2 }, itemStyle: { color: t.highlight }, data: share },
+        ],
+      };
+    });
+
+    const kab = chart('kab', () => {
+      const t = tokens();
+      const g = [...groupBy(applyFilters(rows, getFilters(), ['kabupaten']), 'kabupaten')].filter(([, a]) => a.units >= 5)
+        .map(([k, a]) => [k, a.leasing / a.units, a.units] as [string, number, number]).sort((a, b) => a[1] - b[1]);
+      table('kab', ['Kabupaten', '% Leasing', 'Unit'], [...g].reverse().map(([k, v, u]) => [k, pct(v), u]));
+      const avg = l.pct_leasing;
+      return {
+        tooltip: { trigger: 'axis', valueFormatter: (v: number) => `${num1(v)}%` },
+        grid: { left: 8, right: 40, top: 8, bottom: 8, containLabel: true },
+        xAxis: { type: 'value', max: 100, ...axis({ axisLabel: { color: t.muted, formatter: '{value}%' } }) },
+        yAxis: { type: 'category', data: g.map(([k]) => k), ...axis({ axisLabel: { color: t.muted, fontSize: 10 } }) },
+        series: [{ type: 'bar', barMaxWidth: 12, data: g.map(([, v]) => ({ value: +(v * 100).toFixed(1), itemStyle: { color: v > avg + 0.08 ? t.highlight : t.grey } })),
+          markLine: { silent: true, symbol: 'none', lineStyle: { color: t.muted, type: 'dashed' }, label: { color: t.muted, formatter: 'rata-rata' }, data: [{ xAxis: +(avg * 100).toFixed(1) }] } }],
+      };
+    });
+
+    window.addEventListener('filters:change', debounce(() => { trend.update(); kab.update(); }));
+  }
+  main();
+</script>

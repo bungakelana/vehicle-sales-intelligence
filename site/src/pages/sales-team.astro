@@ -1,0 +1,145 @@
+---
+import { readData } from '../lib/site-data';
+import Base from '../layouts/Base.astro';
+import ChartCard from '../components/ChartCard.astro';
+import Takeaways from '../components/Takeaways.astro';
+const insights = readData('insights.json');
+---
+<Base title="Tim Sales" question="Salesman & SPV mana yang produktif dan disiplin diskon?">
+  <ChartCard id="quad" title={insights.sales_team[0].split(':')[0]} subtitle="Sumbu X = unit terjual · sumbu Y = rata-rata diskon % · garis = median" height={440} />
+  <div class="grid gap-4 lg:grid-cols-2">
+    <ChartCard id="spv" title="Performa per SPV (tim)" subtitle="Unit (batang) & rata-rata diskon % (titik)" height={300} />
+    <ChartCard id="sp" title="Performa per sales point" subtitle="Unit (batang) & rata-rata diskon % (titik)" height={300} />
+  </div>
+  <section class="card p-4">
+    <h3 class="text-[15px] font-semibold text-primary">Leaderboard salesman</h3>
+    <p class="mt-0.5 text-xs text-muted">Klik judul kolom untuk mengurutkan · CV = koefisien variasi penjualan bulanan (makin kecil makin konsisten)</p>
+    <div class="mt-3 max-h-[420px] overflow-auto" id="leader"></div>
+  </section>
+  <div class="grid gap-4 lg:grid-cols-2">
+    <ChartCard id="seg" title="Fleet/Corporate vs Retail" subtitle="Kontribusi unit, rata-rata diskon & % leasing" height={280} />
+    <ChartCard id="fleet" title="Top-10 fleet customer (anonim)" subtitle="Unit terjual seluruh periode" height={280} />
+  </div>
+  <Takeaways page="sales_team" />
+</Base>
+
+<script>
+  import { load, toObjects } from '../lib/data';
+  import { axis, chart, table, tokens } from '../lib/echarts';
+  import { num, num1, pct } from '../lib/format';
+
+  async function main() {
+    const [sf, cust] = await Promise.all([load('data/salesforce.json'), load('data/customers.json')]);
+    const s = toObjects<any>(sf.salesmen);
+    const QCOLOR = (t: ReturnType<typeof tokens>) => ({ Star: t.positive, 'Discount-driven': t.highlight, 'Efficient-low volume': t.accent, 'Needs coaching': t.negative } as Record<string, string>);
+
+    chart('quad', () => {
+      const t = tokens();
+      const qc = QCOLOR(t);
+      const { units_median: um, disc_median: dm } = sf.thresholds;
+      const xs = s.map((r) => r.units), ys = s.map((r) => r.avg_disc_pct);
+      const [x0, x1, y0, y1] = [0, Math.max(...xs) * 1.1, Math.min(...ys) - 0.5, Math.max(...ys) + 0.5];
+      const quadLabel = (name: string, x: number, y: number, pos: string) => ({ name, coord: [x, y], value: name, label: { position: pos } });
+      table('quad', ['Salesman', 'SPV', 'Unit', 'Avg diskon %', 'Kuadran'], s.map((r) => [r.salesman, r.supervisor, r.units, num1(r.avg_disc_pct), r.quadrant]), 2);
+      return {
+        tooltip: { trigger: 'item', formatter: (p: any) => p.data?.[2] ? `<b>${p.data[2]}</b> · ${p.data[3]}<br/>${p.data[0]} unit · diskon ${num1(p.data[1])}%` : '' },
+        grid: { left: 8, right: 24, top: 16, bottom: 28, containLabel: true },
+        xAxis: { type: 'value', name: 'Unit terjual', nameLocation: 'middle', nameGap: 24, min: x0, max: Math.ceil(x1), ...axis() },
+        yAxis: { type: 'value', name: 'Avg diskon %', min: +y0.toFixed(1), max: +y1.toFixed(1), ...axis() },
+        series: [{
+          type: 'scatter', symbolSize: 13,
+          data: s.map((r) => [r.units, r.avg_disc_pct, r.salesman, r.quadrant]),
+          itemStyle: { color: (p: any) => qc[p.data[3]], opacity: 0.9, borderColor: t.surface, borderWidth: 1 },
+          label: { show: true, position: 'right', fontSize: 9, color: t.muted, formatter: (p: any) => p.data[2].replace('SLS-', '') },
+          markLine: { silent: true, symbol: 'none', lineStyle: { color: t.muted, type: 'dashed' }, label: { show: false }, data: [{ xAxis: um }, { yAxis: dm }] },
+          markPoint: {
+            symbol: 'rect', symbolSize: 1, silent: true,
+            label: { show: true, color: t.muted, fontSize: 12, fontWeight: 600, formatter: (p: any) => p.name },
+            data: [
+              { name: '★ Star', coord: [x1 * 0.93, y0 + 0.25], label: { position: 'left' } },
+              { name: 'Discount-driven', coord: [x1 * 0.93, y1 - 0.25], label: { position: 'left' } },
+              { name: 'Efficient-low volume', coord: [x0 + 1, y0 + 0.25], label: { position: 'right' } },
+              { name: 'Needs coaching', coord: [x0 + 1, y1 - 0.25], label: { position: 'right' } },
+            ],
+          },
+        }],
+      };
+    });
+
+    const team = (id: string, data: any, label: string) => chart(id, () => {
+      const t = tokens();
+      const r = toObjects<any>(data);
+      table(id, [label, 'Unit', 'Net (Rp M)', 'Avg diskon %', 'Salesman'], r.map((x) => [x[data.cols[0]], x.units, num1(x.net), num1(x.avg_disc_pct), x.salesmen]));
+      return {
+        tooltip: { trigger: 'axis' },
+        legend: { right: 0 },
+        xAxis: { type: 'category', data: r.map((x) => x[data.cols[0]]), ...axis({ splitLine: { show: false }, axisLabel: { color: t.muted, fontSize: 10 } }) },
+        yAxis: [{ type: 'value', ...axis() }, { type: 'value', scale: true, ...axis({ splitLine: { show: false }, axisLabel: { color: t.muted, formatter: '{value}%' } }) }],
+        series: [
+          { name: 'Unit', type: 'bar', barMaxWidth: 32, itemStyle: { color: t.accent, borderRadius: [3, 3, 0, 0] }, data: r.map((x) => x.units) },
+          { name: 'Avg diskon %', type: 'line', yAxisIndex: 1, lineStyle: { width: 0 }, symbolSize: 10, itemStyle: { color: t.highlight }, data: r.map((x) => x.avg_disc_pct) },
+        ],
+      };
+    });
+    team('spv', sf.spv, 'SPV');
+    team('sp', sf.sales_point, 'Sales point');
+
+    // Leaderboard yang bisa diurutkan
+    const host = document.getElementById('leader')!;
+    const cols: [string, string, (r: any) => string, boolean][] = [
+      ['salesman', 'Salesman', (r) => r.salesman, false], ['supervisor', 'SPV', (r) => r.supervisor, false],
+      ['sales_point', 'Cabang', (r) => r.sales_point, false], ['units', 'Unit', (r) => num(r.units), true],
+      ['net', 'Net (Rp M)', (r) => num1(r.net), true], ['avg_disc_pct', 'Avg diskon', (r) => `${num1(r.avg_disc_pct)}%`, true],
+      ['pct_leasing', '% Leasing', (r) => pct(r.pct_leasing, 0), true], ['cv', 'CV bulanan', (r) => num1(r.cv), true],
+      ['quadrant', 'Kuadran', (r) => r.quadrant, false],
+    ];
+    let sortKey = 'units', asc = false;
+    const renderLeader = () => {
+      const qc = QCOLOR(tokens());
+      const data = [...s].sort((a, b) => (a[sortKey] > b[sortKey] ? 1 : -1) * (asc ? 1 : -1));
+      host.innerHTML = `<table class="data"><thead><tr>${cols.map(([k, l, , n]) =>
+        `<th class="${n ? 'n' : ''}" aria-sort="${k === sortKey ? (asc ? 'ascending' : 'descending') : 'none'}"><button type="button" data-sort="${k}" class="font-semibold">${l}${k === sortKey ? (asc ? ' ▲' : ' ▼') : ''}</button></th>`).join('')}</tr></thead><tbody>${
+        data.map((r) => `<tr>${cols.map(([k, , f, n]) => `<td class="${n ? 'n' : ''}">${k === 'quadrant' ? `<span style="color:${qc[r.quadrant]}">●</span> ${f(r)}` : f(r)}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
+    };
+    host.addEventListener('click', (e) => {
+      const k = (e.target as HTMLElement).closest<HTMLButtonElement>('[data-sort]')?.dataset.sort;
+      if (!k) return;
+      asc = k === sortKey ? !asc : false;
+      sortKey = k;
+      renderLeader();
+    });
+    renderLeader();
+    window.addEventListener('theme:change', renderLeader);
+
+    chart('seg', () => {
+      const t = tokens();
+      const g = toObjects<any>(cust.segments);
+      table('seg', ['Segmen', 'Unit', 'Customer', 'Avg diskon %', '% Leasing'], g.map((x) => [x.customer_type, x.units, x.customers, num1(x.avg_disc_pct), pct(x.leasing, 0)]));
+      const total = g.reduce((a, x) => a + x.units, 0);
+      return {
+        tooltip: { trigger: 'item' },
+        legend: { show: false },
+        series: [{ type: 'pie', radius: ['45%', '72%'], itemStyle: { borderColor: t.surface, borderWidth: 2 },
+          label: { color: t.text, fontSize: 11, formatter: (p: any) => {
+            const x = g[p.dataIndex];
+            return `${p.name}\n${pct(x.units / total, 0)} unit · diskon ${num1(x.avg_disc_pct)}%\nleasing ${pct(x.leasing, 0)}`;
+          } },
+          data: g.map((x, i) => ({ name: x.customer_type, value: x.units, itemStyle: { color: i === 0 ? t.accent : t.grey } })) }],
+      };
+    });
+
+    chart('fleet', () => {
+      const t = tokens();
+      const f = toObjects<any>(cust.top_fleet).reverse();
+      table('fleet', ['Customer', 'Unit', 'Net (Rp M)', 'Terakhir beli', 'Kabupaten'], [...f].reverse().map((x) => [x.customer_id, x.units, num1(x.net), x.last, x.kabupaten]));
+      return {
+        tooltip: { trigger: 'axis' },
+        grid: { left: 8, right: 40, top: 8, bottom: 8, containLabel: true },
+        xAxis: { type: 'value', ...axis({ axisLabel: { show: false }, splitLine: { show: false } }) },
+        yAxis: { type: 'category', data: f.map((x) => x.customer_id), ...axis({ axisLabel: { color: t.muted, fontSize: 10 } }) },
+        series: [{ type: 'bar', barMaxWidth: 12, itemStyle: { color: t.accent }, label: { show: true, position: 'right', color: t.muted }, data: f.map((x) => x.units) }],
+      };
+    });
+  }
+  main();
+</script>

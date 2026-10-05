@@ -1,0 +1,185 @@
+---
+import { readData } from '../lib/site-data';
+import Base from '../layouts/Base.astro';
+import FilterBar from '../components/FilterBar.astro';
+import KpiCard from '../components/KpiCard.astro';
+import ChartCard from '../components/ChartCard.astro';
+import Takeaways from '../components/Takeaways.astro';
+const insights = readData('insights.json');
+const leasing = readData('leasing.json');
+const discount = readData('discount.json');
+
+const fmtPct = (v: number) => `${(v * 100).toFixed(0)}%`;
+const leasingTitle = `${fmtPct(leasing.pct_leasing)} unit dibiayai leasing — 3 partner menguasai ${fmtPct(leasing.top3_share)} transaksi kredit`;
+const discTitle = `Diskon minggu terakhir bulan ${String(discount.month_end.diff_pp).replace('.', ',')} pp lebih tinggi — tanpa lonjakan volume yang sebanding`;
+---
+<Base title="Executive Overview">
+  <section class="card overflow-hidden p-6 sm:p-8" style="background: linear-gradient(135deg, var(--surface), color-mix(in srgb, var(--accent) 8%, var(--surface)))">
+    <p class="text-xs font-semibold uppercase tracking-wider" style="color: var(--highlight)">Vehicle Sales & Customer Intelligence · Riau 2024–2026</p>
+    <h1 class="mt-2 max-w-4xl text-2xl font-bold leading-tight tracking-tight text-primary sm:text-[32px]">{insights.hero}</h1>
+    <p class="mt-3 max-w-3xl text-sm leading-relaxed text-muted">Dashboard ini menjawab lima pertanyaan bisnis dealer kendaraan niaga: di mana penjualan kuat, apakah diskon efektif, seberapa rawan ketergantungan leasing, di mana proses STNK macet, dan siapa salesman yang produktif sekaligus disiplin diskon.</p>
+  </section>
+
+  <FilterBar />
+
+  <div class="grid grid-cols-2 gap-3 md:grid-cols-4">
+    <KpiCard id="units" label="Unit terjual" />
+    <KpiCard id="net" label="Net revenue" />
+    <KpiCard id="disc" label="Rata-rata diskon" />
+    <KpiCard id="leasing" label="% Leasing" />
+    <KpiCard id="gross" label="Gross revenue" />
+    <KpiCard id="stnk" label="Rata-rata billing → STNK" />
+    <KpiCard id="customers" label="Jumlah customer" hint="seluruh periode" />
+    <KpiCard id="repeat" label="% Repeat customer" hint="seluruh periode" />
+  </div>
+
+  <ChartCard id="trend" title={insights.overview[0]} subtitle="Unit per bulan (batang) & net revenue (garis)" height={340} />
+
+  <h2 class="pt-2 text-lg font-semibold text-primary">3 temuan kunci</h2>
+  <div class="grid gap-4 lg:grid-cols-3">
+    <ChartCard id="f-leasing" title={leasingTitle} subtitle="Share transaksi kredit per leasing partner" height={260} />
+    <ChartCard id="f-disc" title={discTitle} subtitle="Rata-rata diskon & unit per minggu dalam bulan" height={260} />
+    <ChartCard id="f-geo" title={insights.geography[1].split(' — ')[0]} subtitle="Unit per 100 ribu penduduk (kabupaten Riau)" height={260} />
+  </div>
+
+  <section aria-labelledby="rec-title">
+    <h2 id="rec-title" class="text-lg font-semibold text-primary">Rekomendasi</h2>
+    <div class="mt-3 grid gap-3 md:grid-cols-2 lg:grid-cols-3">
+      {insights.recommendations.map((r, i) => (
+        <article class="card p-4">
+          <div class="text-xs font-semibold" style="color: var(--highlight)">#{i + 1}</div>
+          <h3 class="mt-1 font-semibold text-primary">{r.title}</h3>
+          <p class="mt-1 text-sm leading-relaxed text-muted">{r.body}</p>
+        </article>
+      ))}
+      <a href="geography" class="card flex items-center justify-center p-4 font-semibold text-accent hover:underline">Explore dashboard →</a>
+    </div>
+  </section>
+
+  <Takeaways page="overview" />
+</Base>
+
+<script>
+  import { applyFilters, debounce, fact, getFilters, groupBy, load, sum } from '../lib/data';
+  import { axis, chart, table, tokens } from '../lib/echarts';
+  import { num, num1, pct, rpJt, ym } from '../lib/format';
+
+  async function main() {
+  const [rows, meta, leasing, discount, geo] = await Promise.all([
+    fact(), load('data/meta.json'), load('data/leasing.json'), load('data/discount.json'), load('data/geo.json'),
+  ]);
+
+  const setKpi = (id: string, value: string, delta = '') => {
+    const el = document.querySelector(`[data-kpi="${id}"]`)!;
+    el.querySelector('[data-value]')!.textContent = value;
+    if (delta) el.querySelector('[data-delta]')!.innerHTML = delta;
+  };
+
+  function prevPeriodRows(period: string) {
+    if (/^\d{4}$/.test(period)) return String(Number(period) - 1);
+    const m = period.match(/^(\d{4})Q([1-4])$/);
+    if (!m) return '';
+    const q = Number(m[2]);
+    return q === 1 ? `${Number(m[1]) - 1}Q4` : `${m[1]}Q${q - 1}`;
+  }
+
+  const trend = chart('trend', () => {
+    const t = tokens();
+    const f = getFilters();
+    const g = groupBy(applyFilters(rows, f, ['period']), 'year_month');
+    const months: string[] = meta.filters.year_month;
+    const units = months.map((m) => g.get(m)?.units ?? 0);
+    const net = months.map((m) => +((g.get(m)?.net ?? 0) / 1000).toFixed(2));
+    table('trend', ['Bulan', 'Unit', 'Net revenue (Rp M)'], months.map((m, i) => [m, units[i], num1(net[i])]));
+    const inPeriod = (m: string) => !f.period || m.startsWith(f.period.slice(0, 4)) &&
+      (!f.period.includes('Q') || Math.ceil(Number(m.slice(5, 7)) / 3) === Number(f.period.slice(5)));
+    return {
+      legend: { data: ['Unit', 'Net revenue'], left: 'center' },
+      tooltip: { trigger: 'axis' },
+      xAxis: { type: 'category', data: months.map(ym), ...axis({ splitLine: { show: false } }) },
+      yAxis: [
+        { type: 'value', name: 'Unit', ...axis() },
+        { type: 'value', name: 'Rp M', ...axis({ splitLine: { show: false } }) },
+      ],
+      series: [
+        { name: 'Unit', type: 'bar', barMaxWidth: 18, data: units.map((u, i) => ({ value: u, itemStyle: { color: inPeriod(months[i]) ? t.accent : t.grey, borderRadius: [3, 3, 0, 0] } })) },
+        { name: 'Net revenue', type: 'line', yAxisIndex: 1, smooth: true, symbol: 'none', data: net, lineStyle: { color: t.highlight, width: 2 }, itemStyle: { color: t.highlight },
+          markArea: { silent: true, itemStyle: { color: 'rgba(127,127,127,0.07)' }, label: { color: t.muted, fontSize: 10 },
+            data: [[{ name: 'Lebaran', xAxis: 'Apr 24' }, { xAxis: 'Apr 24' }], [{ name: 'Lebaran', xAxis: 'Mar 25' }, { xAxis: 'Mar 25' }], [{ name: 'Lebaran', xAxis: 'Mar 26' }, { xAxis: 'Mar 26' }]] } },
+      ],
+    };
+  });
+
+  function renderKpis() {
+    const f = getFilters();
+    const a = sum(applyFilters(rows, f));
+    const prevKey = f.period ? prevPeriodRows(f.period) : '';
+    const p = prevKey ? sum(applyFilters(rows, { ...f, period: prevKey })) : null;
+    const delta = (cur: number, prev?: number) => {
+      if (!p || !prev) return '';
+      const d = cur / prev - 1;
+      const up = d >= 0;
+      return `<span style="color:var(--${up ? 'positive' : 'negative'})">${up ? '▲' : '▼'} ${pct(Math.abs(d))}</span> vs ${prevKey}`;
+    };
+    setKpi('units', num(a.units), delta(a.units, p?.units));
+    setKpi('net', rpJt(a.net), delta(a.net, p?.net));
+    setKpi('gross', rpJt(a.gross), delta(a.gross, p?.gross));
+    const disc = a.gross ? a.discount / a.gross : 0;
+    const pd = p && p.gross ? p.discount / p.gross : 0;
+    setKpi('disc', pct(disc), p ? `${disc >= pd ? '▲' : '▼'} ${num1(Math.abs(disc - pd) * 100)} pp vs ${prevKey}` : '');
+    setKpi('leasing', pct(a.units ? a.leasing / a.units : 0, 0));
+    setKpi('stnk', a.stnk_n ? `${num1(a.stnk_days_sum / a.stnk_n)} hari` : '–', a.stnk_n ? `${pct(a.stnk_breach / a.stnk_n, 0)} lewat SLA 30 hari` : '');
+    setKpi('customers', num(meta.kpi_static.customers));
+    setKpi('repeat', pct(meta.kpi_static.pct_repeat_customer, 0));
+  }
+
+  chart('f-leasing', () => {
+    const t = tokens();
+    const data = leasing.share.map((r: any[], i: number) => ({ name: r[0], value: +(r[1] * 100).toFixed(1), itemStyle: { color: i < 3 ? t.accent : t.grey } }));
+    table('f-leasing', ['Leasing', 'Share %', 'Unit'], leasing.share.map((r: any[]) => [r[0], num1(r[1] * 100), r[2]]));
+    return {
+      tooltip: { trigger: 'axis', valueFormatter: (v: number) => `${num1(v)}%` },
+      grid: { left: 8, right: 36, top: 8, bottom: 8, containLabel: true },
+      xAxis: { type: 'value', ...axis({ axisLabel: { show: false }, splitLine: { show: false } }) },
+      yAxis: { type: 'category', inverse: true, data: data.map((d: any) => d.name), ...axis() },
+      series: [{ type: 'bar', data, barMaxWidth: 16, label: { show: true, position: 'right', color: t.muted, formatter: (p: any) => `${num1(p.value)}%` } }],
+    };
+  });
+
+  chart('f-disc', () => {
+    const t = tokens();
+    const w = discount.month_end.by_week;
+    table('f-disc', ['Minggu ke-', 'Unit', 'Rata-rata diskon'], w.map((r: number[]) => [r[0], r[1], pct(r[2])]));
+    return {
+      tooltip: { trigger: 'axis' },
+      legend: { data: ['Diskon %', 'Unit'], right: 0 },
+      xAxis: { type: 'category', data: w.map((r: number[]) => r[0] === 4 ? 'Minggu 4+' : `Minggu ${r[0]}`), ...axis({ splitLine: { show: false } }) },
+      yAxis: [{ type: 'value', ...axis({ axisLabel: { color: t.muted, formatter: (v: number) => `${v}%` } }), min: 4 }, { type: 'value', ...axis({ splitLine: { show: false } }) }],
+      series: [
+        { name: 'Diskon %', type: 'bar', barMaxWidth: 28, data: w.map((r: number[]) => ({ value: +(r[2] * 100).toFixed(2), itemStyle: { color: r[0] === 4 ? t.highlight : t.grey, borderRadius: [3, 3, 0, 0] } })) },
+        { name: 'Unit', type: 'line', yAxisIndex: 1, data: w.map((r: number[]) => r[1]), lineStyle: { color: t.accent }, itemStyle: { color: t.accent } },
+      ],
+    };
+  });
+
+  chart('f-geo', () => {
+    const t = tokens();
+    const g = (geo.rows as any[][]).map((r) => Object.fromEntries(geo.cols.map((c: string, i: number) => [c, r[i]])))
+      .filter((r) => r.population_k).sort((a, b) => a.units_per_100k - b.units_per_100k);
+    const worst = [...g].sort((a, b) => b.gap_units - a.gap_units)[0]?.kabupaten_std; // white space = gap potensi terbesar
+    table('f-geo', ['Kabupaten', 'Unit', 'Unit/100rb penduduk'], g.map((r) => [r.kabupaten_std, r.units, num1(r.units_per_100k)]));
+    return {
+      tooltip: { trigger: 'axis' },
+      grid: { left: 8, right: 36, top: 8, bottom: 8, containLabel: true },
+      xAxis: { type: 'value', ...axis({ axisLabel: { show: false }, splitLine: { show: false } }) },
+      yAxis: { type: 'category', data: g.map((r) => r.kabupaten_std), ...axis() },
+      series: [{ type: 'bar', barMaxWidth: 12, label: { show: true, position: 'right', color: t.muted, formatter: (p: any) => num1(p.value) },
+        data: g.map((r) => ({ value: r.units_per_100k, itemStyle: { color: r.kabupaten_std === worst ? t.highlight : t.grey } })) }],
+    };
+  });
+
+  renderKpis();
+  window.addEventListener('filters:change', debounce(() => { renderKpis(); trend.update(); }));
+  }
+  main();
+</script>

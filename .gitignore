@@ -1,0 +1,11 @@
+analytics/data/raw/
+node_modules/
+dist/
+.astro/
+__pycache__/
+.ipynb_checkpoints/
+.venv/
+analytics/data/processed/
+.wrangler/
+*.tmp.*
+~$*

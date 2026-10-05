@@ -1,0 +1,53 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg: #F7F8FA;
+  --surface: #FFFFFF;
+  --border: #E5E7EB;
+  --text: #0F172A;
+  --muted: #6B7280;
+  --primary: #0F2A44;
+  --accent: #1F77B4;
+  --highlight: #F28C28;
+  --positive: #2E9E6A;
+  --negative: #D64545;
+  --grey: #CBD2DC;
+  --seq-1: #DCEAF7; --seq-2: #A9CBEB; --seq-3: #6FA7D8; --seq-4: #2F78B8; --seq-5: #0F2A44;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0B1220; --surface: #111A2B; --border: #1F2A3D; --text: #E5E7EB; --muted: #94A3B8;
+    --primary: #7FB3E6; --accent: #4EA1E8; --highlight: #F5A65B; --positive: #3DC184; --negative: #F07171;
+    --grey: #3A4659;
+    --seq-1: #1A2A40; --seq-2: #24456B; --seq-3: #2F6699; --seq-4: #4EA1E8; --seq-5: #A9D2F5;
+    color-scheme: dark;
+  }
+}
+
+:root[data-theme="dark"] {
+  --bg: #0B1220; --surface: #111A2B; --border: #1F2A3D; --text: #E5E7EB; --muted: #94A3B8;
+  --primary: #7FB3E6; --accent: #4EA1E8; --highlight: #F5A65B; --positive: #3DC184; --negative: #F07171;
+  --grey: #3A4659;
+  --seq-1: #1A2A40; --seq-2: #24456B; --seq-3: #2F6699; --seq-4: #4EA1E8; --seq-5: #A9D2F5;
+  color-scheme: dark;
+}
+
+html { background: var(--bg); color: var(--text); }
+body { background: var(--bg); color: var(--text); font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; -webkit-font-smoothing: antialiased; }
+.num { font-variant-numeric: tabular-nums; }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+.chart { width: 100%; }
+.skeleton { background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--border) 60%, transparent), transparent); background-size: 200% 100%; animation: shimmer 1.4s infinite; }
+@keyframes shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+@media (prefers-reduced-motion: reduce) { .skeleton { animation: none; } }
+table.data { width: 100%; border-collapse: collapse; font-size: 13px; }
+table.data th, table.data td { padding: 6px 8px; border-bottom: 1px solid var(--border); text-align: left; white-space: nowrap; }
+table.data th { color: var(--muted); font-weight: 600; position: sticky; top: 0; background: var(--surface); }
+table.data td.n, table.data th.n { text-align: right; font-variant-numeric: tabular-nums; }
+select, input[type="range"] { accent-color: var(--accent); }
+.select { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 6px 28px 6px 10px; font-size: 14px; color: var(--text); }

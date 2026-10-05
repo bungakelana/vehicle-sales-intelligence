@@ -1,0 +1,107 @@
+---
+import { readData } from '../lib/site-data';
+import Base from '../layouts/Base.astro';
+import KpiCard from '../components/KpiCard.astro';
+import ChartCard from '../components/ChartCard.astro';
+import Takeaways from '../components/Takeaways.astro';
+const insights = readData('insights.json');
+---
+<Base title="Operasional" question="Di tahap mana pengiriman unit & pengurusan STNK paling sering macet?">
+  <div class="grid grid-cols-2 gap-3 md:grid-cols-4">
+    <KpiCard id="stnk" label="Median billing → STNK" />
+    <KpiCard id="sla" label="Lewat SLA STNK" />
+    <KpiCard id="bottleneck" label="Tahap pengiriman terlama" />
+    <KpiCard id="pending" label="STNK belum selesai" />
+  </div>
+  <ChartCard id="funnel" title={insights.operations[1].split(' (')[0]} subtitle="Median & P90 hari per tahap proses: Billing → GI → Physical GI → BSTK, dan total Billing → STNK" height={300} />
+  <div class="grid gap-4 lg:grid-cols-2">
+    <ChartCard id="branch" title="Lead time STNK per cabang" subtitle="Box plot hari billing → STNK selesai · garis merah = SLA" height={320} />
+    <ChartCard id="leasing" title="Unit leasing lebih lama menunggu STNK dibanding cash" subtitle="Box plot hari billing → STNK per leasing" height={320} />
+  </div>
+  <div class="grid gap-4 lg:grid-cols-2">
+    <ChartCard id="breach" title="Persentase unit melewati SLA 30 hari" subtitle="Per cabang" height={280} />
+    <ChartCard id="body" title="Unit dengan karoseri menunggu lebih lama di gudang" subtitle="Median hari GI → Physical GI per jenis karoseri" height={280} />
+  </div>
+  <Takeaways page="operations" />
+</Base>
+
+<script>
+  import { load } from '../lib/data';
+  import { axis, chart, table, tokens } from '../lib/echarts';
+  import { num, num1, pct } from '../lib/format';
+
+  async function main() {
+    const d = await load('data/leadtime.json');
+    const setKpi = (id: string, v: string, h = '') => {
+      const el = document.querySelector(`[data-kpi="${id}"]`)!;
+      el.querySelector('[data-value]')!.textContent = v;
+      el.querySelector('[data-delta]')!.textContent = h;
+    };
+    const total = d.stages[d.stages.length - 1];
+    setKpi('stnk', `${num(total[1])} hari`, `P90 ${num(total[2])} hari`);
+    setKpi('sla', pct(d.pct_sla_breach, 0), `> ${d.sla_days} hari`);
+    setKpi('bottleneck', d.bottleneck_delivery_stage, 'rata-rata hari terbesar');
+    setKpi('pending', num(d.pending_stnk), 'unit (umumnya transaksi baru)');
+
+    chart('funnel', () => {
+      const t = tokens();
+      const st = d.stages;
+      table('funnel', ['Tahap', 'Median', 'P90', 'Rata-rata'], st.map((r: any[]) => [r[0], num1(r[1]), num1(r[2]), num1(r[3])]));
+      const worst = st.slice(0, 3).reduce((a: any[], b: any[]) => (b[3] > a[3] ? b : a));
+      return {
+        tooltip: { trigger: 'axis', valueFormatter: (v: number) => `${num1(v)} hari` },
+        legend: { right: 0 },
+        grid: { left: 8, right: 40, top: 28, bottom: 8, containLabel: true },
+        xAxis: { type: 'value', name: 'hari', ...axis() },
+        yAxis: { type: 'category', inverse: true, data: st.map((r: any[]) => r[0]), ...axis() },
+        series: [
+          { name: 'Median', type: 'bar', barGap: '10%', barMaxWidth: 16, data: st.map((r: any[]) => ({ value: r[1], itemStyle: { color: r === worst ? t.highlight : t.accent } })), label: { show: true, position: 'right', color: t.muted, formatter: (p: any) => num1(p.value) } },
+          { name: 'P90', type: 'bar', barMaxWidth: 16, itemStyle: { color: t.grey }, data: st.map((r: any[]) => r[2]), label: { show: true, position: 'right', color: t.muted, formatter: (p: any) => num1(p.value) } },
+        ],
+      };
+    });
+
+    const box = (id: string, src: any) => chart(id, () => {
+      const t = tokens();
+      table(id, ['Nama', 'Min', 'Q1', 'Median', 'Q3', 'Max', '% lewat SLA'], src.names.map((n: string, i: number) => [n, ...src.box[i].map((v: number) => num1(v)), pct(src.breach[i], 0)]));
+      return {
+        tooltip: { trigger: 'item', formatter: (p: any) => `${p.name}<br/>Median ${num1(p.data[3])} hari · Q3 ${num1(p.data[4])} hari` },
+        grid: { left: 8, right: 16, top: 16, bottom: 8, containLabel: true },
+        xAxis: { type: 'category', data: src.names, ...axis({ splitLine: { show: false }, axisLabel: { color: t.muted, fontSize: 10, interval: 0, rotate: src.names.length > 5 ? 30 : 0 } }) },
+        yAxis: { type: 'value', name: 'hari', ...axis() },
+        series: [{ type: 'boxplot', data: src.box, itemStyle: { color: 'transparent', borderColor: t.accent, borderWidth: 1.5 },
+          markLine: { silent: true, symbol: 'none', lineStyle: { color: t.negative, type: 'dashed' }, label: { color: t.negative, position: 'insideEndTop', formatter: `SLA ${d.sla_days} hari` }, data: [{ yAxis: d.sla_days }] } }],
+      };
+    });
+    box('branch', d.by_branch);
+    box('leasing', d.by_leasing);
+
+    chart('breach', () => {
+      const t = tokens();
+      const r = d.by_branch.names.map((n: string, i: number) => [n, d.by_branch.breach[i]]).sort((a: any[], b: any[]) => b[1] - a[1]);
+      table('breach', ['Cabang', '% lewat SLA'], r.map((x: any[]) => [x[0], pct(x[1])]));
+      return {
+        tooltip: { trigger: 'axis', valueFormatter: (v: number) => `${num1(v)}%` },
+        xAxis: { type: 'category', data: r.map((x: any[]) => x[0]), ...axis({ splitLine: { show: false } }) },
+        yAxis: { type: 'value', ...axis({ axisLabel: { color: t.muted, formatter: '{value}%' } }) },
+        series: [{ type: 'bar', barMaxWidth: 40, data: r.map((x: any[], i: number) => ({ value: +(x[1] * 100).toFixed(1), itemStyle: { color: i === 0 ? t.highlight : t.grey, borderRadius: [3, 3, 0, 0] } })),
+          label: { show: true, position: 'top', color: t.muted, formatter: (p: any) => `${num1(p.value)}%` } }],
+      };
+    });
+
+    chart('body', () => {
+      const t = tokens();
+      const r = d.by_body;
+      table('body', ['Karoseri', 'Median hari GI → Physical GI'], r);
+      return {
+        tooltip: { trigger: 'axis', valueFormatter: (v: number) => `${num1(v)} hari` },
+        grid: { left: 8, right: 40, top: 8, bottom: 8, containLabel: true },
+        xAxis: { type: 'value', ...axis() },
+        yAxis: { type: 'category', inverse: true, data: r.map((x: any[]) => x[0]), ...axis({ axisLabel: { color: t.muted, fontSize: 10 } }) },
+        series: [{ type: 'bar', barMaxWidth: 12, data: r.map((x: any[]) => ({ value: x[1], itemStyle: { color: x[0] === 'CAB CHASSIS' ? t.positive : t.accent } })),
+          label: { show: true, position: 'right', color: t.muted, formatter: (p: any) => num1(p.value) } }],
+      };
+    });
+  }
+  main();
+</script>

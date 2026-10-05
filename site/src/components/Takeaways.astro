@@ -1,0 +1,13 @@
+---
+import { readData } from '../lib/site-data';
+const insights = readData('insights.json');
+type Page = 'overview' | 'geography' | 'discount' | 'financing' | 'sales_team' | 'operations' | 'outlook';
+interface Props { page: Page }
+const items = insights[Astro.props.page] as string[];
+---
+<section class="card border-l-4 p-5" style="border-left-color: var(--highlight)" aria-labelledby="takeaways-title">
+  <h2 id="takeaways-title" class="text-sm font-semibold text-primary">💡 Key Takeaways</h2>
+  <ol class="mt-2 list-decimal space-y-1.5 pl-5 text-sm leading-relaxed">
+    {items.map((t) => <li>{t}</li>)}
+  </ol>
+</section>

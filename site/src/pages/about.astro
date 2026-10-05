@@ -1,0 +1,49 @@
+---
+import { readData } from '../lib/site-data';
+import Base from '../layouts/Base.astro';
+const meta = readData('meta.json');
+const sources = [
+  ['Gaikindo target 850 ribu unit', 'Suara.com, 23 Sep 2026'],
+  ['Penjualan Juli 2026', 'Kompas Otomotif, 9 Agu 2026'],
+  ['Prospek kendaraan niaga 2026', 'Kontan, Mar 2026'],
+  ['NPF & pembiayaan kendaraan Agustus 2026', 'Kontan Keuangan, Okt 2026'],
+  ['42 perusahaan pembiayaan NPF > 5%', 'Fortune IDN, Sep 2026'],
+  ['POJK 35/2025 DP 0%', 'Bisnis.com, Jan 2026'],
+];
+---
+<Base title="About" question="Metodologi, data, dan konteks pasar">
+  <div class="grid gap-4 lg:grid-cols-2">
+    <section class="card p-5">
+      <h2 class="font-semibold text-primary">Why this matters — konteks pasar 2026</h2>
+      <ul class="mt-2 list-disc space-y-1.5 pl-5 text-sm leading-relaxed">
+        <li><b>Pasar mobil nasional moderat.</b> Gaikindo mempertahankan target 2026 di 850.000 unit; daya beli kelas menengah masih tertekan. Juli 2026 ~81 ribu unit, tren membaik.</li>
+        <li><b>Kendaraan niaga ikut siklus komoditas</b> — relevan untuk wilayah perkebunan/tambang Riau.</li>
+        <li><b>Leasing memperketat kredit.</b> NPF gross multifinance ~3,04% (Agu 2026) vs ~2,55% pertengahan 2025.</li>
+        <li><b>DP 0% (POJK 35/2025)</b> hanya untuk perusahaan pembiayaan sehat dengan NPF rendah, maks. 20% portofolio.</li>
+        <li><b>Pembiayaan kendaraan listrik tumbuh &gt;30% YoY</b> meski pembiayaan mobil konvensional menurun.</li>
+      </ul>
+      <p class="mt-3 text-sm text-muted">Implikasi: dealer dengan porsi leasing tinggi dan terkonsentrasi di sedikit partner rentan saat approval diperketat; diskon tak terkontrol makin mahal saat volume stagnan.</p>
+      <h3 class="mt-4 text-sm font-semibold text-primary">Sumber</h3>
+      <ul class="mt-1 space-y-0.5 text-xs text-muted">{sources.map(([a, b]) => <li>{a} — {b}</li>)}</ul>
+    </section>
+    <section class="card p-5">
+      <h2 class="font-semibold text-primary">Data & metodologi</h2>
+      <ul class="mt-2 list-disc space-y-1.5 pl-5 text-sm leading-relaxed">
+        <li>Grain: 1 baris = 1 unit terjual (billing). {meta.n_units.toLocaleString('id-ID')} unit, {meta.period.start} s/d {meta.period.end}.</li>
+        <li><b>Data dummy/sintetis</b> yang meniru struktur 36 kolom data dealer; seluruh PII dihapus, salesman/SPV/leasing dikodekan.</li>
+        <li>Kota dinormalisasi ke kabupaten/kota lewat <code>city_mapping.csv</code> (mis. PEKANBARU / Kota Pekanbaru / PKU).</li>
+        <li>Diskon % = total diskon / harga unit (tertimbang). Lead time dihitung dari tanggal billing, GI, physical GI, BSTK, STNK.</li>
+        <li>Forecast: SARIMA dengan evaluasi MAPE pada 6 bulan holdout. Segmentasi: K-Means (4 klaster, kabupaten ≥ 20 unit). Anomali diskon: IsolationForest + z-score per tipe.</li>
+        <li>White space: populasi kabupaten (perkiraan, verifikasi dengan BPS) vs unit terjual.</li>
+      </ul>
+      <h3 class="mt-4 text-sm font-semibold text-primary">Tech stack</h3>
+      <p class="mt-1 text-sm text-muted">Python (pandas, statsmodels, scikit-learn, shapely) di build-time → JSON teragregasi → Astro + Tailwind CSS + Apache ECharts (statis, tanpa server).</p>
+      <h3 class="mt-4 text-sm font-semibold text-primary">Limitations & next steps</h3>
+      <ul class="mt-1 list-disc space-y-1 pl-5 text-sm text-muted">
+        <li>Tidak ada data margin/cost, sehingga dampak diskon diukur terhadap harga, bukan profit.</li>
+        <li>Tidak ada data prospek yang gagal closing (conversion funnel SPK).</li>
+        <li>Peta memakai batas GADM lama: Kepulauan Meranti digabung ke poligon Bengkalis.</li>
+      </ul>
+    </section>
+  </div>
+</Base>

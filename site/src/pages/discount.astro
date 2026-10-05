@@ -1,0 +1,145 @@
+---
+import { readData } from '../lib/site-data';
+import Base from '../layouts/Base.astro';
+import KpiCard from '../components/KpiCard.astro';
+import ChartCard from '../components/ChartCard.astro';
+import Takeaways from '../components/Takeaways.astro';
+const insights = readData('insights.json');
+const d = readData('discount.json');
+const c = (v: number, n = 1) => v.toFixed(n).replace('.', ',');
+---
+<Base title="Diskon" question="Apakah diskon benar-benar menaikkan volume, atau hanya menggerus margin?">
+  <div class="grid grid-cols-2 gap-3 md:grid-cols-4">
+    <KpiCard id="me" label="Selisih diskon akhir bulan" />
+    <KpiCard id="leak" label="Potensi kebocoran / bulan" />
+    <KpiCard id="coef" label="Efek +1 pp diskon ke unit/bulan" />
+    <KpiCard id="anom" label="Transaksi diskon anomali" />
+  </div>
+  <div class="grid gap-4 lg:grid-cols-2">
+    <ChartCard id="scatter" title={insights.discount[1].split(' (')[0]} subtitle={`Tiap titik = 1 tipe × 1 bulan · ${d.regression.spec} · R² ${c(d.regression.r2, 2)}`} height={340} />
+    <ChartCard id="week" title={`Diskon minggu ke-4+ ${c(d.month_end.diff_pp, 2)} pp lebih tinggi — indikasi kejar target`} subtitle="Rata-rata diskon & unit per minggu dalam bulan" height={340} />
+  </div>
+  <div class="grid gap-4 lg:grid-cols-2">
+    <ChartCard id="hist" title="Mayoritas transaksi diskon 4–8%; ekor kanan > 12% perlu kontrol" subtitle="Distribusi diskon % (jumlah unit)" height={300} />
+    <ChartCard id="box" title="Sebaran diskon per tipe unit" subtitle="Box plot diskon % (whisker 1,5 × IQR)" height={300} />
+  </div>
+  <div class="grid gap-4 lg:grid-cols-3">
+    <ChartCard id="leakage" class="lg:col-span-2" title={`Discount leakage: ${d.leakage.rows[0][0]} rata-rata ${c(d.leakage.rows[0][2], 2)} pp di atas median tipe yang sama`} subtitle="Selisih rata-rata diskon salesman vs median tipe unit (pp)" height={380} />
+    <ChartCard id="pay" title={`Diskon cash ${c((d.by_payment.Cash - d.by_payment.Leasing) * 100, 2)} pp lebih tinggi dari leasing`} subtitle="Rata-rata diskon tertimbang" height={380} />
+  </div>
+  <section class="card p-4">
+    <h3 class="text-[15px] font-semibold text-primary">Transaksi diskon tidak wajar (IsolationForest + z-score per tipe)</h3>
+    <p class="mt-0.5 text-xs text-muted">Kandidat audit: diskon jauh di atas pola tipe unit yang sama</p>
+    <div class="mt-3 max-h-80 overflow-auto" id="anomalies"></div>
+  </section>
+  <Takeaways page="discount" />
+</Base>
+
+<script>
+  import { load } from '../lib/data';
+  import { axis, chart, table, tokens } from '../lib/echarts';
+  import { num, num1, pct, rp } from '../lib/format';
+
+  async function main() {
+    const d = await load('data/discount.json');
+    const setKpi = (id: string, v: string, h = '') => {
+      const el = document.querySelector(`[data-kpi="${id}"]`)!;
+      el.querySelector('[data-value]')!.textContent = v;
+      el.querySelector('[data-delta]')!.textContent = h;
+    };
+    setKpi('me', `+${num1(d.month_end.diff_pp)} pp`, `${pct(d.month_end.avg_disc_month_end)} vs ${pct(d.month_end.avg_disc_other)}`);
+    setKpi('leak', rp(d.month_end.leakage_per_month), 'kelebihan diskon minggu terakhir');
+    setKpi('coef', `${d.regression.coef_units_per_pp > 0 ? '+' : ''}${d.regression.coef_units_per_pp.toFixed(2).replace('.', ',')} unit`, `p = ${String(d.regression.p_value).replace('.', ',')} → ${d.regression.p_value < 0.05 ? 'signifikan' : 'tidak signifikan'}`);
+    setKpi('anom', num(d.anomalies.rows.length), 'perlu ditinjau');
+
+    chart('scatter', () => {
+      const t = tokens();
+      const fams = [...new Set(d.scatter.rows.map((r: any[]) => r[1]))] as string[];
+      table('scatter', d.scatter.cols, d.scatter.rows, 2);
+      return {
+        tooltip: { trigger: 'item', formatter: (p: any) => `${p.seriesName} · ${p.data[2]}<br/>Diskon ${num1(p.data[0])}% · ${p.data[1]} unit` },
+        legend: { top: 0, type: 'scroll' },
+        grid: { left: 8, right: 16, top: 32, bottom: 28, containLabel: true },
+        xAxis: { type: 'value', name: 'Avg diskon %', nameLocation: 'middle', nameGap: 24, scale: true, ...axis() },
+        yAxis: { type: 'value', ...axis() },
+        series: fams.map((f) => ({
+          name: f, type: 'scatter', symbolSize: 7, itemStyle: { opacity: 0.7 },
+          data: d.scatter.rows.filter((r: any[]) => r[1] === f).map((r: any[]) => [r[3], r[2], r[0]]),
+        })),
+      };
+    });
+
+    chart('week', () => {
+      const t = tokens();
+      const w = d.month_end.by_week;
+      table('week', ['Minggu', 'Unit', 'Avg diskon'], w.map((r: number[]) => [r[0], r[1], pct(r[2])]));
+      return {
+        tooltip: { trigger: 'axis' },
+        legend: { data: ['Avg diskon %', 'Unit'], right: 0 },
+        xAxis: { type: 'category', data: w.map((r: number[]) => (r[0] === 4 ? 'Minggu 4+' : `Minggu ${r[0]}`)), ...axis({ splitLine: { show: false } }) },
+        yAxis: [{ type: 'value', min: 4, ...axis({ axisLabel: { color: t.muted, formatter: '{value}%' } }) }, { type: 'value', ...axis({ splitLine: { show: false } }) }],
+        series: [
+          { name: 'Avg diskon %', type: 'bar', barMaxWidth: 36, data: w.map((r: number[]) => ({ value: +(r[2] * 100).toFixed(2), itemStyle: { color: r[0] === 4 ? t.highlight : t.grey, borderRadius: [3, 3, 0, 0] } })),
+            label: { show: true, position: 'top', color: t.muted, formatter: (p: any) => `${num1(p.value)}%` } },
+          { name: 'Unit', type: 'line', yAxisIndex: 1, data: w.map((r: number[]) => r[1]), lineStyle: { color: t.accent }, itemStyle: { color: t.accent } },
+        ],
+      };
+    });
+
+    chart('hist', () => {
+      const t = tokens();
+      table('hist', ['Rentang diskon', 'Unit'], d.hist.bins.map((b: string, i: number) => [b, d.hist.counts[i]]));
+      return {
+        tooltip: { trigger: 'axis' },
+        xAxis: { type: 'category', data: d.hist.bins, ...axis({ axisLabel: { color: t.muted, fontSize: 10, interval: 1 }, splitLine: { show: false } }) },
+        yAxis: { type: 'value', ...axis() },
+        series: [{ type: 'bar', barCategoryGap: '8%', data: d.hist.counts.map((v: number, i: number) => ({ value: v, itemStyle: { color: i >= 12 ? t.highlight : t.accent } })) }],
+      };
+    });
+
+    chart('box', () => {
+      const t = tokens();
+      table('box', ['Tipe', 'Min', 'Q1', 'Median', 'Q3', 'Max'], d.box.families.map((f: string, i: number) => [f, ...d.box.stats[i].map((v: number) => num1(v))]));
+      return {
+        tooltip: { trigger: 'item', formatter: (p: any) => `${p.name}<br/>Median ${num1(p.data[3])}% · IQR ${num1(p.data[2])}–${num1(p.data[4])}%` },
+        grid: { left: 8, right: 16, top: 16, bottom: 8, containLabel: true },
+        xAxis: { type: 'category', data: d.box.families, ...axis({ axisLabel: { color: t.muted, fontSize: 10, interval: 0 }, splitLine: { show: false } }) },
+        yAxis: { type: 'value', ...axis({ axisLabel: { color: t.muted, formatter: '{value}%' } }) },
+        series: [{ type: 'boxplot', data: d.box.stats, itemStyle: { color: 'transparent', borderColor: t.accent, borderWidth: 1.5 } }],
+      };
+    });
+
+    chart('leakage', () => {
+      const t = tokens();
+      const rows = [...d.leakage.rows].sort((a: any[], b: any[]) => a[2] - b[2]);
+      table('leakage', ['Salesman', 'Unit', 'Selisih vs median (pp)', 'Kelebihan diskon (Rp jt)'], d.leakage.rows);
+      return {
+        tooltip: { trigger: 'axis', formatter: (p: any) => `${p[0].name}<br/>${num1(p[0].value)} pp vs median · ${rows[p[0].dataIndex][1]} unit` },
+        grid: { left: 8, right: 40, top: 8, bottom: 8, containLabel: true },
+        xAxis: { type: 'value', ...axis({ axisLabel: { color: t.muted, formatter: '{value} pp' } }) },
+        yAxis: { type: 'category', data: rows.map((r: any[]) => r[0]), ...axis({ axisLabel: { color: t.muted, fontSize: 10 } }) },
+        series: [{ type: 'bar', barMaxWidth: 12, data: rows.map((r: any[]) => ({ value: r[2], itemStyle: { color: r[2] > 1.5 ? t.highlight : r[2] < 0 ? t.positive : t.grey } })),
+          markLine: { silent: true, symbol: 'none', lineStyle: { color: t.muted, type: 'dashed' }, label: { color: t.muted, formatter: 'ambang +1,5 pp' }, data: [{ xAxis: 1.5 }] } }],
+      };
+    });
+
+    chart('pay', () => {
+      const t = tokens();
+      const e = Object.entries(d.by_payment) as [string, number][];
+      table('pay', ['Cara bayar', 'Avg diskon'], e.map(([k, v]) => [k, pct(v, 2)]));
+      return {
+        tooltip: { trigger: 'axis', valueFormatter: (v: number) => `${num1(v)}%` },
+        xAxis: { type: 'category', data: e.map(([k]) => k), ...axis({ splitLine: { show: false } }) },
+        yAxis: { type: 'value', ...axis({ axisLabel: { color: t.muted, formatter: '{value}%' } }) },
+        series: [{ type: 'bar', barMaxWidth: 56, data: e.map(([k, v]) => ({ value: +(v * 100).toFixed(2), itemStyle: { color: k === 'Cash' ? t.highlight : t.grey, borderRadius: [3, 3, 0, 0] } })),
+          label: { show: true, position: 'top', color: t.text, formatter: (p: any) => `${num1(p.value)}%` } }],
+      };
+    });
+
+    const host = document.getElementById('anomalies')!;
+    const head = ['Tanggal', 'Tipe', 'Salesman', 'Cabang', 'Harga (Rp jt)', 'Diskon %', 'z vs tipe'];
+    host.innerHTML = `<table class="data"><thead><tr>${head.map((h, i) => `<th class="${i >= 4 ? 'n' : ''}">${h}</th>`).join('')}</tr></thead><tbody>${
+      d.anomalies.rows.map((r: any[]) => `<tr>${r.map((v, i) => `<td class="${i >= 4 ? 'n' : ''}">${i === 4 ? num(v) : i >= 5 ? num1(v) : v}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
+  }
+  main();
+</script>

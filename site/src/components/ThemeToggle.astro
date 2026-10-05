@@ -1,0 +1,24 @@
+<button id="theme-toggle" type="button" class="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-border text-muted hover:text-text" aria-label="Ganti tema terang/gelap">
+  <svg class="theme-moon h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>
+  <svg class="theme-sun hidden h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
+</button>
+<script>
+  const btn = document.getElementById('theme-toggle')!;
+  const isDark = () => document.documentElement.dataset.theme === 'dark' ||
+    (!document.documentElement.dataset.theme && matchMedia('(prefers-color-scheme: dark)').matches);
+  const sync = () => {
+    btn.querySelector('.theme-moon')!.classList.toggle('hidden', isDark());
+    btn.querySelector('.theme-sun')!.classList.toggle('hidden', !isDark());
+  };
+  sync();
+  btn.addEventListener('click', () => {
+    const next = isDark() ? 'light' : 'dark';
+    document.documentElement.dataset.theme = next;
+    try { localStorage.setItem('theme', next); } catch {}
+    sync();
+    window.dispatchEvent(new Event('theme:change'));
+  });
+  matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+    if (!document.documentElement.dataset.theme) { sync(); window.dispatchEvent(new Event('theme:change')); }
+  });
+</script>
